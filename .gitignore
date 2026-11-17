@@ -28,3 +28,7 @@ app/libs
 !.idea/runConfigurations.xml
 !.idea/codeStyles/
 !.idea/inspectionProfiles/
+
+# Python bytecode (Claude helper and its tests)
+__pycache__/
+*.pyc
