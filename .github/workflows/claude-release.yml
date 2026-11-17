@@ -52,5 +52,5 @@ jobs:
           `python ~/notable_claude_bridge.py`. Full setup: `tools/claude-bridge/README.md`.
           EOF
           gh release create "$TAG" --target "$GITHUB_SHA" --title "Notable + Claude ($TAG)" \
-            --notes-file notes.md --prerelease \
+            --notes-file notes.md --latest \
             "notable-claude-$TAG.apk" tools/claude-bridge/notable_claude_bridge.py

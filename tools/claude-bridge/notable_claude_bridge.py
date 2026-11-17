@@ -117,6 +117,44 @@ def unique_path(folder, name):
     return candidate
 
 
+def shell_path():
+    return shutil.which("bash") or shutil.which("sh") or "/system/bin/sh"
+
+
+def launch_command(path):
+    """
+    The argv prefix that runs the executable at `path`.
+
+    Android has no /usr/bin/env or /bin/sh. Termux makes `#!/usr/bin/env node` scripts (how npm
+    installs `claude`) work in its shell by rewriting the interpreter path, but that rewrite does
+    not always reach programs started from Python, which then fail with "Exec format error". So
+    read the script's first line and start its interpreter ourselves.
+    """
+    try:
+        with open(path, "rb") as f:
+            head = f.read(512)
+    except OSError:
+        return [path]
+    if head.startswith(b"\x7fELF"):
+        return [path]
+    if not head.startswith(b"#!"):
+        # No interpreter line: shells run such files as shell scripts, so do the same.
+        return [shell_path(), path]
+    words = head[2:].split(b"\n", 1)[0].decode("utf-8", "replace").strip().split()
+    if not words:
+        return [shell_path(), path]
+    interpreter, args = words[0], words[1:]
+    if os.path.basename(interpreter) == "env":
+        args = [a for a in args if a != "-S"]
+        if args:
+            program = shutil.which(args[0]) or args[0]
+            return [program] + args[1:] + [path]
+        return [path]
+    if not os.path.exists(interpreter):
+        interpreter = shutil.which(os.path.basename(interpreter)) or interpreter
+    return [interpreter] + args + [path]
+
+
 class Conversation:
     """One notebook's chat: its folder, history and Claude session. Guarded by self.lock."""
 
@@ -193,6 +231,7 @@ class Bridge:
         self.conversations = {}
         self.lock = threading.Lock()
         self.claude_path = shutil.which(args.claude) or (args.claude if os.path.exists(args.claude) else None)
+        self.claude_cmd = launch_command(self.claude_path) if self.claude_path else None
 
     def conversation(self, key):
         folder = safe_key(key)
@@ -216,7 +255,10 @@ class Bridge:
         if not self.claude_path:
             return None
         try:
-            r = subprocess.run([self.claude_path, "--version"], capture_output=True, text=True, timeout=30)
+            r = subprocess.run(self.claude_cmd + ["--version"], capture_output=True, text=True,
+                               stdin=subprocess.DEVNULL, timeout=60)
+            if r.returncode != 0:
+                return f"error: {(r.stderr or r.stdout).strip()[-300:] or f'exit code {r.returncode}'}"
             return r.stdout.strip() or r.stderr.strip()
         except Exception as e:  # noqa: BLE001 — report anything as "not working"
             return f"error: {e}"
@@ -286,7 +328,7 @@ class Bridge:
         return True
 
     def claude_command(self, conv, system, resume):
-        cmd = [self.claude_path, "-p",
+        cmd = self.claude_cmd + ["-p",
                "--input-format", "stream-json",
                "--output-format", "stream-json",
                "--verbose",
@@ -586,7 +628,9 @@ def main(argv=None):
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.daemon_threads = True
     log(f"Notable Claude bridge v{BRIDGE_VERSION} on http://{args.host}:{args.port}")
-    log("claude:", bridge.claude_path or f"NOT FOUND ('{args.claude}')")
+    log("claude:", " ".join(bridge.claude_cmd) if bridge.claude_cmd else f"NOT FOUND ('{args.claude}')")
+    if bridge.claude_cmd:
+        log("claude --version:", bridge.claude_version())
     log("data:", bridge.root)
     if args.token:
         log("token required")

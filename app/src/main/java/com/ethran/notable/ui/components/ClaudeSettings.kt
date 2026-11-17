@@ -83,8 +83,8 @@ fun ClaudeSettings(settings: AppSettings, onSettingsChange: (AppSettings) -> Uni
         Text(
             "pkg install python nodejs\n" +
                     "npm install -g @anthropic-ai/claude-code   # then run `claude` once to log in\n" +
-                    "cd ~ && curl -LO https://github.com/baharanchi/notable/releases/download/" +
-                    "claude-build-1/notable_claude_bridge.py\n" +
+                    "cd ~ && curl -LO https://github.com/baharanchi/notable/releases/latest/" +
+                    "download/notable_claude_bridge.py\n" +
                     "python ~/notable_claude_bridge.py",
             fontFamily = FontFamily.Monospace,
             fontSize = 12.sp,
@@ -109,8 +109,13 @@ fun ClaudeSettings(settings: AppSettings, onSettingsChange: (AppSettings) -> Uni
                 scope.launch {
                     connection = try {
                         val health = client.health()
-                        if (health.claude == null) "Bridge is running, but it can't find the claude command."
-                        else "Connected. Claude Code ${health.claudeVersion ?: ""}".trim()
+                        val version = health.claudeVersion.orEmpty()
+                        when {
+                            health.claude == null -> "Bridge is running, but it can't find the claude command."
+                            version.startsWith("error") ->
+                                "Bridge is running, but claude fails to start: ${version.removePrefix("error:").trim()}"
+                            else -> "Connected. Claude Code $version".trim()
+                        }
                     } catch (e: Exception) {
                         e.message ?: "Failed"
                     }

@@ -28,10 +28,11 @@ npm install -g @anthropic-ai/claude-code
 Run `claude` once and log in, then copy the bridge script into your Termux home:
 
 ```bash
-cd ~ && curl -LO https://github.com/baharanchi/notable/releases/download/claude-build-1/notable_claude_bridge.py
+cd ~ && curl -LO https://github.com/baharanchi/notable/releases/latest/download/notable_claude_bridge.py
 ```
 
-(Each release on the Releases page has the matching `notable_claude_bridge.py`.)
+(Each release on the Releases page has the matching `notable_claude_bridge.py`; this link
+always fetches the newest one. Run it again to update.)
 
 Start it:
 
@@ -80,6 +81,16 @@ The bridge then runs as a Termux background task and logs to `~/.notable-claude/
 
 Each notebook is one Claude conversation (a quick page has its own). Claude therefore remembers
 earlier checks, so it can say what has improved since the last one.
+
+## Troubleshooting
+
+- **"Exec format error" for …/usr/bin/claude** (bridge from claude-build-1): Android has no
+  `/usr/bin/env`, which `claude`'s first line asks for. Newer bridges start the interpreter
+  (`node`) themselves; update the script with the `curl` line above.
+- **"Can't reach the Claude bridge"**: the bridge isn't running (or Termux was frozen by the
+  system). Start it again, run `termux-wake-lock`, and exempt Termux from battery optimisation.
+- When the bridge starts it prints `claude --version`: if that shows an error, `claude` itself
+  doesn't run — try `claude --version` in Termux.
 
 ## Bridge options
 

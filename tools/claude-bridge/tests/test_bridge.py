@@ -24,6 +24,9 @@ import notable_claude_bridge as bridge_mod  # noqa: E402
 FAKE_CLAUDE = r'''#!/usr/bin/env python3
 import json, os, sys, time
 args = sys.argv[1:]
+if args == ["--version"]:
+    print("9.9.9 (Claude Code)")
+    sys.exit(0)
 msg = json.loads(sys.stdin.readline())
 blocks = msg["message"]["content"]
 text = blocks[0]["text"]
@@ -221,3 +224,39 @@ class BridgeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LaunchCommandTest(unittest.TestCase):
+    """How the bridge starts `claude` on Android, where /usr/bin/env does not exist."""
+
+    def script(self, content):
+        tmp = tempfile.NamedTemporaryFile("w", delete=False, suffix=".sh")
+        tmp.write(content)
+        tmp.close()
+        os.chmod(tmp.name, 0o755)
+        self.addCleanup(os.remove, tmp.name)
+        return tmp.name
+
+    def run_cmd(self, path):
+        import subprocess
+        cmd = bridge_mod.launch_command(path) + ["--version"]
+        return subprocess.run(cmd, capture_output=True, text=True).stdout.strip()
+
+    def test_env_shebang_starts_the_interpreter_directly(self):
+        path = self.script("#!/usr/bin/env python3\nimport sys; print('v', sys.argv[1])\n")
+        cmd = bridge_mod.launch_command(path)
+        self.assertEqual(os.path.basename(cmd[0]).startswith("python3"), True)
+        self.assertEqual(cmd[-1], path)
+        self.assertEqual(self.run_cmd(path), "v --version")
+
+    def test_missing_interpreter_path_is_found_on_path(self):
+        path = self.script("#!/nonexistent/bin/sh\necho v \"$1\"\n")
+        self.assertNotEqual(bridge_mod.launch_command(path)[0], "/nonexistent/bin/sh")
+        self.assertEqual(self.run_cmd(path), "v --version")
+
+    def test_script_without_shebang_runs_in_a_shell(self):
+        path = self.script("echo v \"$1\"\n")
+        self.assertEqual(self.run_cmd(path), "v --version")
+
+    def test_binaries_run_as_they_are(self):
+        self.assertEqual(bridge_mod.launch_command(sys.executable), [sys.executable])
