@@ -83,8 +83,8 @@ fun ClaudeSettings(settings: AppSettings, onSettingsChange: (AppSettings) -> Uni
         Text(
             "pkg install python nodejs\n" +
                     "npm install -g @anthropic-ai/claude-code   # then run `claude` once to log in\n" +
-                    "cd ~ && curl -LO https://raw.githubusercontent.com/baharanchi/notable/main/" +
-                    "tools/claude-bridge/notable_claude_bridge.py\n" +
+                    "cd ~ && curl -LO https://github.com/baharanchi/notable/releases/download/" +
+                    "claude-build-1/notable_claude_bridge.py\n" +
                     "python ~/notable_claude_bridge.py",
             fontFamily = FontFamily.Monospace,
             fontSize = 12.sp,

@@ -28,10 +28,10 @@ npm install -g @anthropic-ai/claude-code
 Run `claude` once and log in, then copy the bridge script into your Termux home:
 
 ```bash
-curl -LO https://raw.githubusercontent.com/baharanchi/notable/main/tools/claude-bridge/notable_claude_bridge.py
+cd ~ && curl -LO https://github.com/baharanchi/notable/releases/download/claude-build-1/notable_claude_bridge.py
 ```
 
-(Use your branch name instead of `main` if the change isn't merged yet.)
+(Each release on the Releases page has the matching `notable_claude_bridge.py`.)
 
 Start it:
 
