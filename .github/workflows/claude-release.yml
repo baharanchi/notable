@@ -1,9 +1,10 @@
 name: Release APK (Claude feedback build)
 # Builds an installable APK and publishes it, with the Termux bridge script, as a GitHub release.
-# Runs when a tag named claude-v* is pushed, or by hand from the Actions tab.
+# Runs for a push to a claude/** branch whose last commit message contains [release]
+# (the release tag is then created here), or by hand from the Actions tab.
 on:
   push:
-    tags: ["claude-v*"]
+    branches: ["claude/**"]
   workflow_dispatch:
 
 permissions:
@@ -11,6 +12,7 @@ permissions:
 
 jobs:
   release:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -36,7 +38,7 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('claude-build-{0}', github.run_number) }}
+          TAG: claude-build-${{ github.run_number }}
         run: |
           apk=$(ls app/build/outputs/apk/debug/*.apk | head -n 1)
           cp "$apk" "notable-claude-$TAG.apk"
