@@ -62,6 +62,7 @@ import com.ethran.notable.data.datastore.AppSettings
 import com.ethran.notable.navigation.NavigationDestination
 import com.ethran.notable.ui.LocalSnackContext
 import com.ethran.notable.ui.SnackConf
+import com.ethran.notable.ui.components.ClaudeSettings
 import com.ethran.notable.ui.components.DebugSettings
 import com.ethran.notable.ui.components.GeneralSettings
 import com.ethran.notable.ui.components.GesturesSettings
@@ -150,7 +151,8 @@ fun SettingsContent(
         stringResource(R.string.settings_tab_gestures_name),
         stringResource(R.string.settings_tab_toolbar_name),
         stringResource(R.string.settings_tab_sync_name),
-        stringResource(R.string.settings_tab_debug_name)
+        stringResource(R.string.settings_tab_debug_name),
+        stringResource(R.string.settings_tab_claude_name),
     )
 
     Surface(
@@ -188,6 +190,8 @@ fun SettingsContent(
                     )
 
                     4 -> DebugSettings(settings, onUpdateSettings, goToWelcome, goToSystemInfo)
+
+                    5 -> ClaudeSettings(settings, onUpdateSettings)
                 }
             }
 

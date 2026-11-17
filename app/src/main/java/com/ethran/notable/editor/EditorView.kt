@@ -16,6 +16,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.unit.dp
+import com.ethran.notable.claude.ClaudeOverlay
+import com.ethran.notable.claude.ClaudeViewModel
+import com.ethran.notable.data.datastore.AppSettings
+import com.ethran.notable.data.datastore.BUTTON_SIZE
+import com.ethran.notable.data.datastore.GlobalAppSettings
 import com.ethran.notable.editor.canvas.CanvasEventBus
 import com.ethran.notable.editor.state.ClipboardStore
 import com.ethran.notable.editor.ui.EditorSurface
@@ -67,7 +73,8 @@ fun EditorView(
     goToPages: (bookId: String) -> Unit,
     goToBugReport: () -> Unit,
 
-    viewModel: EditorViewModel = hiltViewModel()
+    viewModel: EditorViewModel = hiltViewModel(),
+    claudeViewModel: ClaudeViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
     val snackManager = LocalSnackContext.current
@@ -149,6 +156,9 @@ fun EditorView(
                     EditorUiEvent.NavigateToBugReport -> {
                         goToBugReport()
                     }
+
+                    EditorUiEvent.ClaudeCheckPage -> claudeViewModel.checkPage(page)
+                    EditorUiEvent.OpenClaudePanel -> claudeViewModel.showPanel()
                 }
             }
         }
@@ -183,6 +193,15 @@ fun EditorView(
         }
 
         val toolbarState by viewModel.toolbarState.collectAsStateWithLifecycle()
+
+        // One Claude conversation per notebook (or per loose page).
+        LaunchedEffect(toolbarState.notebookId, toolbarState.pageId, toolbarState.pageNumberInfo) {
+            claudeViewModel.bind(
+                notebookId = toolbarState.notebookId,
+                pageId = toolbarState.pageId,
+                pageInfo = toolbarState.pageNumberInfo,
+            )
+        }
 
         // Observe pageId changes from ViewModel state for navigation
         LaunchedEffect(viewModel) {
@@ -232,6 +251,17 @@ fun EditorView(
                 Spacer(modifier = Modifier.weight(1f))
                 ScrollIndicator(viewModel = viewModel, page = page)
             }
+            val settings = GlobalAppSettings.current
+            ClaudeOverlay(
+                viewModel = claudeViewModel,
+                page = page,
+                // Sits above a bottom toolbar.
+                bottomInset = if (settings.toolbarPosition == AppSettings.Position.Bottom &&
+                    toolbarState.isToolbarOpen
+                ) (BUTTON_SIZE + 2).dp else 0.dp,
+                onPanelHeightPx = viewModel::setClaudePanelHeight,
+                onSheetOpenChanged = viewModel::setClaudeSheetOpen,
+            )
             PositionedToolbar(viewModel = viewModel)
             HorizontalScrollIndicator(viewModel = viewModel, page = page)
         }

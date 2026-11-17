@@ -267,6 +267,18 @@ class CanvasObserverRegistry(
     }
 
     private fun observeToolbar() {
+        // The docked Claude panel takes the bottom of the screen from the pen, like the toolbar.
+        observerScope.launch {
+            viewModel.toolbarState
+                .map { it.claudePanelHeightPx }
+                .distinctUntilChanged()
+                .drop(1)
+                .collect { height ->
+                    log.v("claude panel height change: $height")
+                    inputHandler.updateActiveSurface()
+                    refreshManager.refreshUi(null)
+                }
+        }
         observerScope.launch {
             viewModel.toolbarState
                 .map { it.isToolbarOpen }

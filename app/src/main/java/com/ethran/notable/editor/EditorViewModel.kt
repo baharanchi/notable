@@ -111,6 +111,11 @@ data class ToolbarUiState(
     val hasWindowFocus: Boolean = true,
     /** A finger is holding/dragging a selection rectangle on the canvas. */
     val isSelectionGestureActive: Boolean = false,
+
+    /** Height in px of the docked Claude feedback box (0 when hidden); pen input leaves it alone. */
+    val claudePanelHeightPx: Int = 0,
+    /** The Claude chat sheet covers the page: no pen input meanwhile. */
+    val isClaudeSheetOpen: Boolean = false,
 ) {
     /** The active preset's setting — what the drawing pipeline draws with. The fallback
      * only triggers if the active preset was deleted mid-session. */
@@ -130,7 +135,8 @@ data class ToolbarUiState(
                 !isSelectionGestureActive && !isSelectionActive &&
                 !(isMenuOpen || isEraserMenuOpen || isBackgroundSelectorModalOpen) &&
                 penMenuPresetId == null &&
-                !isQuickNavOpen
+                !isQuickNavOpen &&
+                !isClaudeSheetOpen
 }
 
 
@@ -170,6 +176,10 @@ sealed class ToolbarAction {
     object NavigateToHome : ToolbarAction()
 
     data class UpdateQuickNavOpen(val isOpen: Boolean) : ToolbarAction()
+
+    /** Snapshot the page and ask Claude for feedback (the Claude toolbar button). */
+    object ClaudeCheckPage : ToolbarAction()
+    object OpenClaudePanel : ToolbarAction()
 }
 
 
@@ -195,6 +205,10 @@ sealed class EditorUiEvent {
     data class NavigateToLibrary(val folderId: String?) : EditorUiEvent()
     data class NavigateToPages(val bookId: String) : EditorUiEvent()
     object NavigateToBugReport : EditorUiEvent()
+
+    /** Handled by the Claude panel, which needs the PageView to take the snapshot. */
+    object ClaudeCheckPage : EditorUiEvent()
+    object OpenClaudePanel : EditorUiEvent()
 }
 
 // --------------------------------------------------------
@@ -429,6 +443,9 @@ class EditorViewModel @Inject constructor(
             is ToolbarAction.UpdateQuickNavOpen -> {
                 _toolbarState.update { it.copy(isQuickNavOpen = action.isOpen) }
             }
+
+            ToolbarAction.ClaudeCheckPage -> sendUiEvent(EditorUiEvent.ClaudeCheckPage)
+            ToolbarAction.OpenClaudePanel -> sendUiEvent(EditorUiEvent.OpenClaudePanel)
         }
     }
 
@@ -854,6 +871,14 @@ class EditorViewModel @Inject constructor(
 
     fun setShowResetView(showResetView: Boolean) {
         _toolbarState.update { it.copy(showResetView = showResetView) }
+    }
+
+    fun setClaudePanelHeight(heightPx: Int) {
+        _toolbarState.update { it.copy(claudePanelHeightPx = heightPx) }
+    }
+
+    fun setClaudeSheetOpen(isOpen: Boolean) {
+        _toolbarState.update { it.copy(isClaudeSheetOpen = isOpen) }
     }
 
     // --------------------------------------------------------

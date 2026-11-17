@@ -2,6 +2,7 @@ package com.ethran.notable.data.datastore
 
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.snapshots.Snapshot
+import com.ethran.notable.claude.ClaudeDefaults
 import com.ethran.notable.editor.ui.toolbar.model.ToolbarLayout
 import com.ethran.notable.editor.ui.toolbar.model.ToolbarPen
 import com.ethran.notable.navigation.LinkFormat
@@ -73,6 +74,18 @@ data class AppSettings(
     val blockSystemGestures: Boolean = false,
     val linkFormat: LinkFormat = LinkFormat.Markdown,
 
+    // Claude (via the Termux bridge, see tools/claude-bridge)
+    val claudeBridgeUrl: String = ClaudeDefaults.BRIDGE_URL,
+    val claudeBridgeToken: String = "",
+    /** Feedback instructions for notebooks that have none of their own. */
+    val claudeDefaultInstructions: String = ClaudeDefaults.INSTRUCTIONS,
+    /** Message sent with the page snapshot when the Claude toolbar button is pressed. */
+    val claudeCheckPrompt: String = ClaudeDefaults.CHECK_PROMPT,
+    val claudeHintPrompt: String = ClaudeDefaults.HINT_PROMPT,
+    val claudeCaptureMode: ClaudeCaptureMode = ClaudeCaptureMode.Visible,
+    /** Shell command Termux runs to start the bridge ("Start bridge in Termux"). */
+    val claudeTermuxCommand: String = ClaudeDefaults.TERMUX_COMMAND,
+
     // Debug
     val showWelcome: Boolean = true,
     // [system information -- does not have a setting]
@@ -89,5 +102,13 @@ data class AppSettings(
 
     enum class Position {
         Top, Bottom, // Left,Right,
+    }
+
+    enum class ClaudeCaptureMode {
+        /** What is on screen: the visible part of the page, at the current zoom. */
+        Visible,
+
+        /** The whole page, top to bottom, split into screen-sized images. */
+        FullPage,
     }
 }

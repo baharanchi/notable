@@ -34,6 +34,9 @@ com.ethran.notable/
     - PageLeases.kt — Leases on the pages the views show; keeps them held in PageDataManager.
     - PageViewport.kt — Scroll and zoom of a page.
 
+- claude/ — Claude feedback panel: page snapshots, chat and files sent to Claude Code in Termux
+  through the bridge in tools/claude-bridge (see its README).
+
 - io/ — File and bitmap I/O
     - ImportEngine.kt / ExportEngine.kt — Handling .xopp and PDF files.
     - PageContentRenderer.kt / ThumbnailGenerator.kt — Generating visuals from page data.

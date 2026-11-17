@@ -267,6 +267,9 @@
     <string name="toolbar_element_page_nav">Page number</string>
     <string name="toolbar_element_home">Library</string>
     <string name="toolbar_element_menu">Menu</string>
+    <string name="toolbar_element_claude">Ask Claude</string>
+    <string name="claude_panel">Claude panel</string>
+    <string name="settings_tab_claude_name" translatable="false">Claude</string>
     <string name="toolbar_element_divider">Divider</string>
     <string name="no_undo_to_perform">Nothing to undo</string>
     <string name="no_redo_to_perform">Nothing to redo</string>

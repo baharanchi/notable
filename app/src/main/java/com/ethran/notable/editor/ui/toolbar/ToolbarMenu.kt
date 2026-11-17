@@ -133,6 +133,12 @@ private fun ToolbarMenuContent(
         }
         DividerCentered()
 
+        MenuItem(stringResource(R.string.claude_panel)) {
+            onAction(ToolbarAction.OpenClaudePanel)
+            onAction(ToolbarAction.ToggleMenu)
+        }
+        DividerCentered()
+
         MenuItem(stringResource(R.string.change_background)) {
             onAction(ToolbarAction.ToggleBackgroundSelector(true))
             onAction(ToolbarAction.ToggleMenu)

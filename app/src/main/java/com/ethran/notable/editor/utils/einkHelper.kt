@@ -140,8 +140,11 @@ fun onSurfaceDestroy(view: View, touchHelper: TouchHelper?) {
  * Recreates the raw-drawing session for [view] (limit/exclude rects around the toolbar) and leaves
  * it **disabled**: the caller arms it with `OnyxInputHandler.enableRawDrawing`, which also
  * configures the eraser channel and pen style.
+ *
+ * [bottomPanelHeight] is the docked panel at the bottom of the editor (the Claude feedback box,
+ * above a bottom toolbar); the pen leaves it to touch input as well.
  */
-fun setupSurface(view: View, touchHelper: TouchHelper?, toolbarHeight: Int) {
+fun setupSurface(view: View, touchHelper: TouchHelper?, toolbarHeight: Int, bottomPanelHeight: Int = 0) {
     if (touchHelper == null) return
     // Takes at least 50ms on Note 4c,
     // and I don't think that we need it immediately
@@ -154,21 +157,19 @@ fun setupSurface(view: View, touchHelper: TouchHelper?, toolbarHeight: Int) {
     val viewWidth = view.width
     val viewHeight = view.height
 
-    // Determine the exclusion area based on toolbar position
-    val excludeRect: Rect =
-        if (GlobalAppSettings.current.toolbarPosition == AppSettings.Position.Top) {
-            Rect(0, 0, viewWidth, toolbarHeight)
-        } else {
-            Rect(0, viewHeight - toolbarHeight, viewWidth, viewHeight)
-        }
+    // Determine the exclusion areas based on toolbar position, plus the bottom panel
+    val toolbarOnTop = GlobalAppSettings.current.toolbarPosition == AppSettings.Position.Top
+    val topExcluded = if (toolbarOnTop) toolbarHeight else 0
+    val bottomExcluded = (if (toolbarOnTop) 0 else toolbarHeight) + bottomPanelHeight
 
-    val limitRect =
-        if (GlobalAppSettings.current.toolbarPosition == AppSettings.Position.Top)
-            Rect(0, toolbarHeight, viewWidth, viewHeight)
-        else
-            Rect(0, 0, viewWidth, viewHeight - toolbarHeight)
+    val excludeRects = buildList {
+        if (topExcluded > 0 || bottomExcluded == 0) add(Rect(0, 0, viewWidth, topExcluded))
+        if (bottomExcluded > 0) add(Rect(0, viewHeight - bottomExcluded, viewWidth, viewHeight))
+    }
 
-    touchHelper.setLimitRect(mutableListOf(limitRect)).setExcludeRect(listOf(excludeRect))
+    val limitRect = Rect(0, topExcluded, viewWidth, (viewHeight - bottomExcluded).coerceAtLeast(topExcluded))
+
+    touchHelper.setLimitRect(mutableListOf(limitRect)).setExcludeRect(excludeRects)
         .openRawDrawing()
     log.i("Setup editable surface completed")
 

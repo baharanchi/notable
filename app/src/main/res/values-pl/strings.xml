@@ -258,6 +258,8 @@
     <string name="toolbar_element_page_nav">Numer strony</string>
     <string name="toolbar_element_home">Biblioteka</string>
     <string name="toolbar_element_menu">Menu</string>
+    <string name="toolbar_element_claude">Zapytaj Claude</string>
+    <string name="claude_panel">Panel Claude</string>
     <string name="toolbar_element_divider">Separator</string>
 
 </resources>

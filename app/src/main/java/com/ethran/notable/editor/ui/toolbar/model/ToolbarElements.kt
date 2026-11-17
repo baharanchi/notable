@@ -11,6 +11,7 @@ import com.ethran.notable.editor.utils.Pen
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Clipboard
 import compose.icons.feathericons.EyeOff
+import compose.icons.feathericons.MessageSquare
 import compose.icons.feathericons.RefreshCcw
 
 /**
@@ -88,6 +89,12 @@ object ToolbarElements {
             contentDescription = "page navigation",
             visibleWhen = { state, _ -> state.notebookId != null },
             kind = CustomKind.PAGE_NAV,
+        ),
+        ActionElement(
+            id = ToolbarElementId.CLAUDE,
+            icon = IconRef.Vector(FeatherIcons.MessageSquare),
+            contentDescription = "ask Claude about this page",
+            action = ToolbarAction.ClaudeCheckPage,
         ),
         ActionElement(
             id = ToolbarElementId.HOME,
