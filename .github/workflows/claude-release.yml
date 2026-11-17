@@ -1,0 +1,54 @@
+name: Release APK (Claude feedback build)
+# Builds an installable APK and publishes it, with the Termux bridge script, as a GitHub release.
+# Runs when a tag named claude-v* is pushed, or by hand from the Actions tab.
+on:
+  push:
+    tags: ["claude-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: "21"
+          distribution: "temurin"
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Unit tests
+        run: ./gradlew testDebugUnitTest
+
+      - name: Bridge tests
+        run: python3 -m unittest discover -s tools/claude-bridge/tests
+
+      # A debug build: installable as is, signed with the runner's debug key.
+      - name: Build APK
+        run: ./gradlew assembleDebug
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('claude-build-{0}', github.run_number) }}
+        run: |
+          apk=$(ls app/build/outputs/apk/debug/*.apk | head -n 1)
+          cp "$apk" "notable-claude-$TAG.apk"
+          cat > notes.md <<'EOF'
+          Notable with the Claude feedback panel (snapshot the page → feedback from Claude Code in Termux).
+
+          **Install:** this APK is signed differently from the official Notable, so uninstall the official app first.
+          Your notes are kept: they live in `Documents/notabledb`, outside the app (back that folder up anyway).
+
+          **Termux side:** download `notable_claude_bridge.py` below into Termux's home and run
+          `python ~/notable_claude_bridge.py`. Full setup: `tools/claude-bridge/README.md`.
+          EOF
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "Notable + Claude ($TAG)" \
+            --notes-file notes.md --prerelease \
+            "notable-claude-$TAG.apk" tools/claude-bridge/notable_claude_bridge.py
