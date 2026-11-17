@@ -5,6 +5,7 @@ import android.graphics.Color
 import android.util.Base64
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.scale
+import com.ethran.notable.claude.bridge.ClaudeImage
 import com.ethran.notable.data.PageSaver
 import com.ethran.notable.data.datastore.AppSettings
 import com.ethran.notable.editor.PageView

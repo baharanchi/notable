@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Plain HTTP is allowed only to this device, for the Claude bridge running in Termux
-     (tools/claude-bridge). Everything else keeps the platform default (HTTPS only). -->
+<!-- Plain HTTP is allowed only to this device, for Claude's helper running in Termux
+     (docs/claude-feedback.md). Everything else keeps the platform default (HTTPS only). -->
 <network-security-config>
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">127.0.0.1</domain>

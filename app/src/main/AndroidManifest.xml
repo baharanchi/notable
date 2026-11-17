@@ -7,7 +7,7 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
-    <!-- Lets Notable start the Claude bridge in Termux (tools/claude-bridge). -->
+    <!-- Lets Notable start Claude's helper in Termux (docs/claude-feedback.md). -->
     <uses-permission android:name="com.termux.permission.RUN_COMMAND"/>
 
     <queries>
@@ -50,6 +50,11 @@
                 <data android:scheme="notable" />
             </intent-filter>
         </activity>
+
+        <!-- Termux reports here when a command it ran for Notable (the Claude helper) ends. -->
+        <receiver
+            android:name=".claude.bridge.TermuxResultReceiver"
+            android:exported="false" />
 
         <provider
             android:name="com.ethran.notable.editor.utils.Provider"

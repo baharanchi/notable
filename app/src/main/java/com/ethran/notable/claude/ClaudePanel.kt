@@ -1,8 +1,5 @@
 package com.ethran.notable.claude
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -12,7 +9,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,7 +19,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
@@ -36,22 +31,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.ethran.notable.claude.bridge.ClaudeEntry
 import com.ethran.notable.data.datastore.GlobalAppSettings
 import com.ethran.notable.editor.PageView
 import com.ethran.notable.ui.noRippleClickable
@@ -59,13 +49,12 @@ import java.text.DateFormat
 import java.util.Date
 
 private val PANEL_BODY_HEIGHT = 150.dp
-private val TEXT_SIZE = 15.sp
 
 /**
  * Everything Claude in the editor: the docked feedback box at the bottom (above a bottom
  * toolbar) and, when opened, the sheet with the chat, uploaded files and instructions.
  *
- * [onPanelHeightPx] reports the docked box's height so pen input can leave it alone;
+ * [onPanelHeightPx] reports the docked box's height so pen input leaves it alone;
  * [onSheetOpenChanged] lets the editor turn pen input off while the sheet covers the page.
  */
 @Composable
@@ -96,14 +85,9 @@ fun ClaudeOverlay(
 
     if (state.isSheetOpen) {
         Column(Modifier.fillMaxSize()) {
-            // The page stays visible above the sheet, but it does not take pen input meanwhile.
+            // The page stays visible above the sheet, but takes no pen input meanwhile.
             Spacer(Modifier.weight(0.35f))
-            ClaudeSheet(
-                state = state,
-                viewModel = viewModel,
-                page = page,
-                modifier = Modifier.weight(0.65f),
-            )
+            ClaudeSheet(state, viewModel, page, Modifier.weight(0.65f))
             Spacer(Modifier.height(bottomInset))
         }
     }
@@ -128,22 +112,20 @@ private fun DockedPanel(
             .border(1.dp, Color.Black)
     ) {
         Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 4.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Claude", fontWeight = FontWeight.Bold, fontSize = TEXT_SIZE)
+            Text("Claude", fontWeight = FontWeight.Bold, fontSize = CLAUDE_TEXT_SIZE)
             Spacer(Modifier.width(10.dp))
             Text(
-                statusLine(state),
+                state.statusLine,
                 fontSize = 13.sp,
                 fontStyle = FontStyle.Italic,
                 maxLines = 1,
                 modifier = Modifier.weight(1f),
             )
             if (state.isBusy) {
-                PanelButton("Cancel") { viewModel.cancel() }
+                PanelButton("Cancel", enabled = state.conversation?.busy == true) { viewModel.cancel() }
             } else {
                 PanelButton("Check page") { viewModel.checkPage(page) }
                 PanelButton("Hint") { viewModel.askHint(page) }
@@ -168,77 +150,35 @@ private fun PanelBody(state: ClaudeUiState, viewModel: ClaudeViewModel) {
     val scroll = rememberScrollState()
     val partial = state.conversation?.partial.orEmpty()
     val latest = state.latest
+    val problem = state.problem
 
     Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
         when {
-            state.error != null -> {
-                Text(state.error, fontSize = TEXT_SIZE, color = Color.Black, fontWeight = FontWeight.Bold)
-                if (state.bridgeUnreachable) {
-                    Spacer(Modifier.height(6.dp))
-                    BridgeHelp(viewModel)
-                } else {
-                    Spacer(Modifier.height(6.dp))
-                    PanelButton("OK") { viewModel.dismissError() }
-                }
+            problem != null -> ProblemCard(problem, onRetry = viewModel::retry)
+
+            state.notice != null -> {
+                Text(state.notice, fontSize = CLAUDE_TEXT_SIZE, fontWeight = FontWeight.Bold)
+                PanelButton("OK") { viewModel.dismissNotice() }
             }
 
-            partial.isNotBlank() -> Text(renderMarkdown(partial), fontSize = TEXT_SIZE)
+            partial.isNotBlank() -> Text(renderMarkdown(partial), fontSize = CLAUDE_TEXT_SIZE)
 
-            latest != null -> {
-                Text(
-                    renderMarkdown(latest.text),
-                    fontSize = TEXT_SIZE,
-                    fontWeight = if (latest.role == "error") FontWeight.Bold else FontWeight.Normal,
-                )
-            }
+            latest != null -> Text(
+                renderMarkdown(latest.text),
+                fontSize = CLAUDE_TEXT_SIZE,
+                fontWeight = if (latest.role == "error") FontWeight.Bold else FontWeight.Normal,
+            )
 
             else -> Text(
-                "Write on the page, then tap “Check page” (or the Claude button in the toolbar) " +
-                        "to get feedback. Set how Claude should answer under Chat → Instructions.",
-                fontSize = TEXT_SIZE,
+                "Write on the page, then tap “Check page” (or the Claude button in the toolbar). " +
+                        "Set how Claude should answer under Chat → Instructions.",
+                fontSize = CLAUDE_TEXT_SIZE,
                 fontStyle = FontStyle.Italic,
             )
         }
     }
     // New text replaces the old: start reading at the top.
-    LaunchedEffect(latest?.id) { scroll.scrollTo(0) }
-}
-
-@Composable
-private fun BridgeHelp(viewModel: ClaudeViewModel) {
-    val context = LocalContext.current
-    var message by remember { mutableStateOf<String?>(null) }
-    val requestPermission = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        message = if (granted) viewModel.startBridgeInTermux() ?: "Starting… tap Retry in a few seconds."
-        else "Permission denied. You can also start the bridge yourself in Termux."
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        PanelButton("Start bridge in Termux") {
-            if (!TermuxLauncher.hasPermission(context) && TermuxLauncher.isTermuxInstalled(context)) {
-                requestPermission.launch(TermuxLauncher.PERMISSION)
-            } else {
-                message = viewModel.startBridgeInTermux() ?: "Starting… tap Retry in a few seconds."
-            }
-        }
-        PanelButton("Retry") { message = null; viewModel.retry() }
-    }
-    Text(
-        message ?: "Or run in Termux:  ${GlobalAppSettings.current.claudeTermuxCommand}",
-        fontSize = 13.sp,
-        modifier = Modifier.padding(top = 4.dp),
-    )
-}
-
-private fun statusLine(state: ClaudeUiState): String {
-    val conv = state.conversation
-    return when {
-        state.isSending -> "Sending…"
-        conv?.busy == true -> conv.status.ifBlank { "Claude is thinking…" }
-        state.error != null -> "Problem"
-        else -> state.title
-    }
+    LaunchedEffect(latest?.id, problem) { scroll.scrollTo(0) }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -266,7 +206,7 @@ private fun ClaudeSheet(
             Text(
                 "Claude · ${state.title}",
                 fontWeight = FontWeight.Bold,
-                fontSize = TEXT_SIZE,
+                fontSize = CLAUDE_TEXT_SIZE,
                 maxLines = 1,
                 modifier = Modifier.weight(1f),
             )
@@ -277,6 +217,16 @@ private fun ClaudeSheet(
             PanelButton("Close") { viewModel.closeSheet() }
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(Color.Black))
+        state.problem?.let {
+            ProblemCard(it, onRetry = viewModel::retry, modifier = Modifier.padding(8.dp))
+            Box(Modifier.fillMaxWidth().height(0.5.dp).background(Color.Black))
+        }
+        state.notice?.let {
+            Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(it, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                PanelButton("OK") { viewModel.dismissNotice() }
+            }
+        }
         Box(Modifier.fillMaxWidth().weight(1f).padding(8.dp)) {
             when (state.sheetTab) {
                 ClaudeSheetTab.Chat -> ChatTab(state, viewModel, page)
@@ -301,7 +251,7 @@ private fun ChatTab(state: ClaudeUiState, viewModel: ClaudeViewModel, page: Page
             InkTextField(
                 value = draft,
                 onValueChange = { draft = it },
-                placeholder = "Message Claude… (e.g. “give me a hint”)",
+                placeholder = "Message Claude… (e.g. “give me a hint for 2b”)",
                 singleLine = false,
                 modifier = Modifier.weight(1f).heightIn(min = 44.dp, max = 120.dp),
             )
@@ -309,7 +259,7 @@ private fun ChatTab(state: ClaudeUiState, viewModel: ClaudeViewModel, page: Page
             Column {
                 PanelButton(if (attachPage) "☑ page" else "☐ page") { attachPage = !attachPage }
                 if (state.isBusy) {
-                    PanelButton("Cancel") { viewModel.cancel() }
+                    PanelButton("Cancel", enabled = state.conversation?.busy == true) { viewModel.cancel() }
                 } else {
                     PanelButton("Send", enabled = draft.isNotBlank() || attachPage) {
                         viewModel.send(page, draft, attachPage)
@@ -318,13 +268,9 @@ private fun ChatTab(state: ClaudeUiState, viewModel: ClaudeViewModel, page: Page
                 }
             }
         }
-        state.error?.let {
-            Text(it, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
-            if (state.bridgeUnreachable) BridgeHelp(viewModel)
-        }
         Row(Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                statusLine(state).takeIf { state.isBusy }.orEmpty(),
+                if (state.isBusy) state.statusLine else "",
                 fontSize = 13.sp,
                 fontStyle = FontStyle.Italic,
                 modifier = Modifier.weight(1f),
@@ -339,23 +285,21 @@ private fun ChatTab(state: ClaudeUiState, viewModel: ClaudeViewModel, page: Page
             if (history.isEmpty() && partial.isBlank()) {
                 item {
                     Text(
-                        "No messages yet. Claude sees a snapshot of the page when “☑ page” is on.",
-                        fontSize = TEXT_SIZE,
+                        "No messages yet. With “☑ page”, Claude sees a snapshot of the page.",
+                        fontSize = CLAUDE_TEXT_SIZE,
                         fontStyle = FontStyle.Italic,
                         modifier = Modifier.padding(8.dp),
                     )
                 }
             }
-            items(history, key = { it.id.ifEmpty { it.time.toString() } }) { entry -> ChatEntry(entry) }
+            items(history, key = { it.id.ifEmpty { it.time.toString() } }) { ChatEntry(it) }
             if (partial.isNotBlank()) {
-                item(key = "partial") {
-                    ChatEntry(ClaudeEntry(role = "assistant", text = partial))
-                }
+                item(key = "partial") { ChatEntry(ClaudeEntry(role = "assistant", text = partial)) }
             }
         }
     }
     LaunchedEffect(history.size, partial.length) {
-        // Same items as the list above: the placeholder, the history, the reply being written.
+        // Same items as the list: the placeholder, the history, the reply being written.
         val count = history.size + (if (partial.isNotBlank()) 1 else 0) +
                 (if (history.isEmpty() && partial.isBlank()) 1 else 0)
         if (count > 0) listState.scrollToItem(count - 1)
@@ -366,33 +310,30 @@ private fun ChatTab(state: ClaudeUiState, viewModel: ClaudeViewModel, page: Page
 private fun ChatEntry(entry: ClaudeEntry) {
     val context = LocalContext.current
     val time = if (entry.time > 0) DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(entry.time)) else ""
-    when (entry.role) {
-        "event" -> Text(
+    if (entry.role == "event") {
+        Text(
             "— ${entry.text} $time",
             fontSize = 12.sp,
             fontStyle = FontStyle.Italic,
             modifier = Modifier.padding(vertical = 4.dp),
         )
-
-        else -> Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-            val who = when (entry.role) {
-                "user" -> "You"
-                "error" -> "Error"
-                else -> "Claude"
-            }
-            val attachments = if (entry.images.isNotEmpty()) " · 📄 page snapshot" else ""
-            Text("$who  $time$attachments", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            val body = entry.text.ifBlank { if (entry.images.isNotEmpty()) "(page only)" else "" }
-            Text(
-                renderMarkdown(body),
-                fontSize = TEXT_SIZE,
-                modifier = Modifier
-                    .then(
-                        if (entry.role == "assistant") Modifier.noRippleClickable { copyText(context, entry.text) }
-                        else Modifier
-                    ),
-            )
+        return
+    }
+    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        val who = when (entry.role) {
+            "user" -> "You"
+            "error" -> "Error"
+            else -> "Claude"
         }
+        val attachments = if (entry.images.isNotEmpty()) " · page snapshot" else ""
+        Text("$who  $time$attachments", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Text(
+            renderMarkdown(entry.text.ifBlank { if (entry.images.isNotEmpty()) "(page only)" else "" }),
+            fontSize = CLAUDE_TEXT_SIZE,
+            // Long-press-free copy for e-ink: tap a reply to copy it.
+            modifier = if (entry.role == "assistant") Modifier.noRippleClickable { copyText(context, entry.text) }
+            else Modifier,
+        )
     }
 }
 
@@ -410,38 +351,33 @@ private fun FilesTab(state: ClaudeUiState, viewModel: ClaudeViewModel) {
                 fontSize = 13.sp,
                 modifier = Modifier.weight(1f),
             )
-            PanelButton(if (state.isSending) "Uploading…" else "Upload file", enabled = !state.isSending) {
-                pick.launch(arrayOf("*/*"))
-            }
+            PanelButton("Upload file", enabled = !state.isBusy) { pick.launch(arrayOf("*/*")) }
         }
-        state.error?.let { Text(it, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
         Spacer(Modifier.height(6.dp))
         LazyColumn(Modifier.fillMaxSize()) {
             if (files.isEmpty()) {
-                item { Text("No files yet.", fontSize = TEXT_SIZE, fontStyle = FontStyle.Italic) }
+                item { Text("No files yet.", fontSize = CLAUDE_TEXT_SIZE, fontStyle = FontStyle.Italic) }
             }
             items(files, key = { it.name }) { file ->
                 Row(
                     Modifier.fillMaxWidth().padding(vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(file.name, fontSize = TEXT_SIZE, modifier = Modifier.weight(1f))
+                    Text(file.name, fontSize = CLAUDE_TEXT_SIZE, modifier = Modifier.weight(1f))
                     Text("${(file.size + 1023) / 1024} KB", fontSize = 12.sp)
                     Spacer(Modifier.width(8.dp))
-                    PanelButton("Delete") { viewModel.deleteFile(file.name) }
+                    PanelButton("Delete", enabled = !state.isBusy) { viewModel.deleteFile(file.name) }
                 }
             }
-            state.conversation?.let { conv ->
-                if (conv.folder.isNotBlank()) {
-                    item {
-                        Text(
-                            "In Termux: ${conv.folder}" +
-                                    (conv.sessionId?.let { "\nResume by hand: claude --resume $it" } ?: ""),
-                            fontSize = 12.sp,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.padding(top = 12.dp),
-                        )
-                    }
+            state.conversation?.takeIf { it.folder.isNotBlank() }?.let { conv ->
+                item {
+                    Text(
+                        "In Termux: ${conv.folder}" +
+                                (conv.sessionId?.let { "\nContinue by hand: cd there, then claude --resume $it" } ?: ""),
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.padding(top = 12.dp),
+                    )
                 }
             }
         }
@@ -459,9 +395,8 @@ private fun InstructionsTab(state: ClaudeUiState, viewModel: ClaudeViewModel) {
 
     Column(Modifier.fillMaxSize()) {
         Text(
-            "How Claude should give feedback in this notebook. Sent with every message, so " +
-                    "changes apply right away." +
-                    if (usesDefault) " (Currently the default from Settings → Claude.)" else "",
+            "How Claude gives feedback in this notebook. Sent with every message, so changes " +
+                    "apply right away." + if (usesDefault) " (Now: the default from Settings → Claude.)" else "",
             fontSize = 13.sp,
         )
         Row(
@@ -480,10 +415,7 @@ private fun InstructionsTab(state: ClaudeUiState, viewModel: ClaudeViewModel) {
             singleLine = false,
             modifier = Modifier.fillMaxWidth().weight(1f),
         )
-        Row(
-            Modifier.padding(top = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
+        Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             PanelButton("Save for this notebook", enabled = dirty || usesDefault) {
                 viewModel.setNotebookInstructions(draft)
             }
@@ -495,116 +427,9 @@ private fun InstructionsTab(state: ClaudeUiState, viewModel: ClaudeViewModel) {
     }
 }
 
-// ---------------------------------------------------------------------------------------------
-// Small e-ink widgets
-// ---------------------------------------------------------------------------------------------
-
-@Composable
-internal fun PanelButton(
-    label: String,
-    selected: Boolean = false,
-    enabled: Boolean = true,
-    onClick: () -> Unit,
-) {
-    Box(
-        Modifier
-            .padding(2.dp)
-            .background(if (selected) Color.Black else Color.White)
-            .border(1.dp, if (enabled) Color.Black else Color.Gray)
-            .then(if (enabled) Modifier.noRippleClickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            label,
-            fontSize = 14.sp,
-            color = when {
-                selected -> Color.White
-                enabled -> Color.Black
-                else -> Color.Gray
-            },
-        )
-    }
-}
-
-@Composable
-internal fun InkTextField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    placeholder: String,
-    singleLine: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    Box(
-        modifier
-            .background(Color.White)
-            .border(1.dp, Color.Black)
-            .padding(8.dp)
-    ) {
-        if (value.isEmpty()) {
-            Text(placeholder, color = Color.Gray, fontSize = TEXT_SIZE)
-        }
-        BasicTextField(
-            value = value,
-            onValueChange = onValueChange,
-            singleLine = singleLine,
-            textStyle = TextStyle(fontSize = TEXT_SIZE, color = Color.Black),
-            cursorBrush = SolidColor(Color.Black),
-            modifier = Modifier.fillMaxWidth().then(if (singleLine) Modifier else Modifier.fillMaxHeight()),
-        )
-    }
-}
-
 /** Finger touches on the panel must not reach the page's gestures (swipes, scroll) below it. */
 private fun Modifier.blockTouchesBelow(): Modifier = pointerInput(Unit) {
     awaitPointerEventScope {
         while (true) awaitPointerEvent()
     }
-}
-
-private fun copyText(context: Context, text: String) {
-    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
-    clipboard.setPrimaryClip(ClipData.newPlainText("Claude", text))
-}
-
-/**
- * Just enough Markdown for chat replies on e-ink: **bold**, *italic*, `code`, headings and
- * bullet lists. Everything else is shown as written.
- */
-internal fun renderMarkdown(text: String): AnnotatedString = buildAnnotatedString {
-    val lines = text.trimEnd().lines()
-    lines.forEachIndexed { index, rawLine ->
-        var line = rawLine
-        val heading = Regex("^#{1,6}\\s+").find(line)
-        if (heading != null) {
-            withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { appendInline(line.substring(heading.range.last + 1)) }
-        } else {
-            val bullet = Regex("^(\\s*)[-*+]\\s+").find(line)
-            if (bullet != null) {
-                append(bullet.groupValues[1])
-                append("• ")
-                line = line.substring(bullet.range.last + 1)
-            }
-            appendInline(line)
-        }
-        if (index < lines.lastIndex) append('\n')
-    }
-}
-
-private val INLINE = Regex("\\*\\*(.+?)\\*\\*|__(.+?)__|`([^`]+)`|(?<![*\\w])\\*(?!\\s)(.+?)(?<!\\s)\\*(?![*\\w])")
-
-private fun AnnotatedString.Builder.appendInline(line: String) {
-    var last = 0
-    for (match in INLINE.findAll(line)) {
-        append(line.substring(last, match.range.first))
-        val (bold, boldUnderscore, code, italic) = match.destructured
-        when {
-            bold.isNotEmpty() -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(bold) }
-            boldUnderscore.isNotEmpty() -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(boldUnderscore) }
-            code.isNotEmpty() -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) { append(code) }
-            italic.isNotEmpty() -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(italic) }
-        }
-        last = match.range.last + 1
-    }
-    append(line.substring(last))
 }

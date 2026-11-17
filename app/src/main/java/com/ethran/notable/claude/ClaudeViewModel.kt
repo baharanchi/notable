@@ -5,6 +5,13 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ethran.notable.claude.bridge.BridgeHttpException
+import com.ethran.notable.claude.bridge.BridgeState
+import com.ethran.notable.claude.bridge.BridgeUnreachableException
+import com.ethran.notable.claude.bridge.ClaudeConversation
+import com.ethran.notable.claude.bridge.ClaudeEntry
+import com.ethran.notable.claude.bridge.ClaudeImage
+import com.ethran.notable.claude.bridge.ClaudeMessageRequest
 import com.ethran.notable.data.AppRepository
 import com.ethran.notable.data.datastore.GlobalAppSettings
 import com.ethran.notable.editor.PageView
@@ -22,6 +29,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.serializer
+import java.util.UUID
 import javax.inject.Inject
 
 private val log = ShipBook.getLogger("ClaudeViewModel")
@@ -31,7 +39,7 @@ enum class ClaudeSheetTab { Chat, Files, Instructions }
 data class ClaudeUiState(
     /** The docked feedback box at the bottom of the editor. */
     val isPanelVisible: Boolean = false,
-    /** The full chat sheet (chat, files, instructions). Pen input is off while it is open. */
+    /** The sheet with chat, files and instructions. Pen input is off while it is open. */
     val isSheetOpen: Boolean = false,
     val sheetTab: ClaudeSheetTab = ClaudeSheetTab.Chat,
 
@@ -40,53 +48,84 @@ data class ClaudeUiState(
     val title: String = "",
     val pageInfo: String = "",
 
+    /** As last seen from the bridge (or the app's cache of it). */
     val conversation: ClaudeConversation? = null,
-    /** Set while the app is capturing/uploading, before the bridge reports busy. */
-    val isSending: Boolean = false,
-    /** Last failure talking to the bridge, shown in the panel. */
-    val error: String? = null,
-    val bridgeUnreachable: Boolean = false,
+    /** What the app itself is doing before the bridge takes over ("Taking a snapshot…"). */
+    val activity: String? = null,
+    val bridgeStarting: Boolean = false,
+    /** Why Claude can't be reached, with how to fix it. */
+    val problem: ClaudeProblem? = null,
+    /** A one-off message (the bridge refused something). */
+    val notice: String? = null,
 
     /** This notebook's own instructions; empty means the default from Settings applies. */
     val notebookInstructions: String = "",
 ) {
-    val isBusy: Boolean get() = isSending || conversation?.busy == true
+    val isBusy: Boolean get() = activity != null || conversation?.busy == true
 
     val effectiveInstructions: String
         get() = notebookInstructions.ifBlank { GlobalAppSettings.current.claudeDefaultInstructions }
 
-    /** What the docked panel shows: the reply being written, else the latest reply or error. */
+    /** What the docked panel shows: the latest reply or error. */
     val latest: ClaudeEntry?
         get() = conversation?.history?.lastOrNull { it.role == "assistant" || it.role == "error" }
+
+    val statusLine: String
+        get() {
+            val conv = conversation
+            return when {
+                bridgeStarting -> "Starting Claude…"
+                activity != null -> activity
+                conv?.busy == true -> conv.status.ifBlank { "Claude is thinking…" }
+                problem != null -> "Needs attention"
+                else -> title
+            }
+        }
 }
 
 /**
- * Drives the Claude panel: sends page snapshots, chat messages and files to the Termux bridge
- * ([ClaudeBridgeClient]) and polls it for replies. The bridge does the actual work and keeps the
- * conversation, so a reply that arrives while the editor is closed is there when it reopens.
+ * Drives the Claude panel. Every operation goes through [ClaudeConnection.bridge], which starts
+ * the bridge in Termux when needed; replies are collected by polling while Claude works, and the
+ * conversation is cached in the app so the panel shows it without starting anything.
+ *
+ * A failed operation is remembered: "Try again" repeats exactly that step — a message that
+ * already reached the bridge is not sent twice (its id is kept), only waited for again.
  */
 @HiltViewModel
 class ClaudeViewModel @Inject constructor(
     @param:ApplicationContext private val context: Context,
-    private val client: ClaudeBridgeClient,
+    private val connection: ClaudeConnection,
     private val snapshotter: PageSnapshotter,
+    private val cache: ClaudeConversationCache,
     private val appRepository: AppRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ClaudeUiState())
     val state: StateFlow<ClaudeUiState> = _state.asStateFlow()
 
+    private val bridge get() = connection.bridge
     private var pollJob: Job? = null
+    private var retry: (suspend () -> Unit)? = null
+
+    init {
+        viewModelScope.launch {
+            bridge.state.collect { s ->
+                _state.update { it.copy(bridgeStarting = s is BridgeState.Starting) }
+            }
+        }
+    }
 
     /** Called by the editor whenever the shown page (or its notebook) changes. */
     fun bind(notebookId: String?, pageId: String?, pageInfo: String) {
         val key = notebookId ?: pageId?.let { "page-$it" } ?: return
-        val previous = _state.value.conversationKey
         _state.update { it.copy(pageInfo = pageInfo) }
-        if (key == previous) return
+        if (key == _state.value.conversationKey) return
 
+        pollJob?.cancel()
+        retry = null
         _state.update {
-            it.copy(conversationKey = key, conversation = null, error = null, notebookInstructions = "")
+            it.copy(conversationKey = key, conversation = null, problem = null, notice = null,
+                notebookInstructions = "", activity = null)
         }
         viewModelScope.launch {
             val title = notebookId?.let {
@@ -95,31 +134,28 @@ class ClaudeViewModel @Inject constructor(
             val instructions = runCatching {
                 appRepository.kvProxy.get(instructionsKey(key), String.serializer())
             }.getOrNull().orEmpty()
-            _state.update {
-                if (it.conversationKey != key) it
-                else it.copy(title = title, notebookInstructions = instructions)
-            }
-            if (_state.value.isPanelVisible) refresh(startPolling = true)
+            val cached = cache.load(key)
+            if (_state.value.conversationKey != key) return@launch
+            _state.update { it.copy(title = title, notebookInstructions = instructions, conversation = cached) }
+            // A reply was still on its way when we last looked: go and collect it.
+            if (cached?.busy == true) startPolling()
         }
     }
 
-    // ---- panel visibility ----
+    // ---- panel ----
 
-    fun showPanel() {
-        _state.update { it.copy(isPanelVisible = true) }
-        refresh(startPolling = true)
-    }
+    fun showPanel() = _state.update { it.copy(isPanelVisible = true) }
 
     fun hidePanel() = _state.update { it.copy(isPanelVisible = false, isSheetOpen = false) }
 
-    fun openSheet(tab: ClaudeSheetTab = ClaudeSheetTab.Chat) {
+    fun openSheet(tab: ClaudeSheetTab = ClaudeSheetTab.Chat) =
         _state.update { it.copy(isPanelVisible = true, isSheetOpen = true, sheetTab = tab) }
-        refresh(startPolling = true)
-    }
 
     fun closeSheet() = _state.update { it.copy(isSheetOpen = false) }
 
     fun selectTab(tab: ClaudeSheetTab) = _state.update { it.copy(sheetTab = tab) }
+
+    fun dismissNotice() = _state.update { it.copy(notice = null) }
 
     // ---- messages ----
 
@@ -132,57 +168,54 @@ class ClaudeViewModel @Inject constructor(
 
     fun send(page: PageView?, text: String, attachPage: Boolean, kind: String = "chat") {
         val key = _state.value.conversationKey ?: return
+        if (text.isBlank() && !attachPage) return
+        _state.update { it.copy(isPanelVisible = true) }
         if (_state.value.isBusy) {
-            _state.update { it.copy(isPanelVisible = true, error = "Claude is still answering — wait or cancel.") }
+            _state.update { it.copy(notice = "Claude is still answering — wait, or cancel it first.") }
             return
         }
-        if (text.isBlank() && !attachPage) return
-        _state.update { it.copy(isPanelVisible = true, isSending = true, error = null) }
-
-        viewModelScope.launch {
-            try {
-                val images = if (attachPage && page != null) {
+        val id = UUID.randomUUID().toString()
+        var delivered = false
+        perform(if (attachPage) "Taking a snapshot…" else "Sending…") {
+            if (!delivered) {
+                val images: List<ClaudeImage> = if (attachPage && page != null) {
                     snapshotter.capture(page, GlobalAppSettings.current.claudeCaptureMode)
                 } else emptyList()
+                _state.update { it.copy(activity = "Sending…") }
                 val s = _state.value
-                client.send(
-                    key,
-                    ClaudeMessageRequest(
-                        text = text.trim(),
-                        instructions = s.effectiveInstructions,
-                        title = s.title,
-                        context = if (attachPage) "Notebook “${s.title}”, page ${s.pageInfo}" else null,
-                        kind = kind,
-                        images = images,
-                    )
+                val request = ClaudeMessageRequest(
+                    id = id,
+                    text = text.trim(),
+                    instructions = s.effectiveInstructions,
+                    title = s.title,
+                    context = if (attachPage) "Notebook “${s.title}”, page ${s.pageInfo}" else null,
+                    kind = kind,
+                    model = GlobalAppSettings.current.claudeModel.ifBlank { null },
+                    images = images,
                 )
-                _state.update { it.copy(bridgeUnreachable = false) }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                log.e("Sending to Claude failed", e)
-                reportError(e)
-            } finally {
-                _state.update { it.copy(isSending = false) }
+                bridge.use { it.send(key, request) }
+                delivered = true
             }
-            refresh(startPolling = true)
+            refresh(key)
+            startPolling()
         }
     }
 
     fun cancel() {
         val key = _state.value.conversationKey ?: return
-        viewModelScope.launch {
-            runCatching { client.cancel(key) }.onFailure(::reportError)
-            refresh(startPolling = true)
+        perform("Cancelling…") {
+            bridge.use { it.cancel(key) }
+            refresh(key)
+            startPolling()
         }
     }
 
     /** Forgets the Claude session and the chat; uploaded files stay unless [keepFiles] is false. */
     fun newConversation(keepFiles: Boolean = true) {
         val key = _state.value.conversationKey ?: return
-        viewModelScope.launch {
-            runCatching { client.reset(key, keepFiles) }.onFailure(::reportError)
-            refresh(startPolling = false)
+        perform("Starting over…") {
+            bridge.use { it.reset(key, keepFiles) }
+            refresh(key)
         }
     }
 
@@ -190,35 +223,27 @@ class ClaudeViewModel @Inject constructor(
 
     fun uploadFile(uri: Uri) {
         val key = _state.value.conversationKey ?: return
-        _state.update { it.copy(isSending = true, error = null) }
-        viewModelScope.launch {
-            try {
-                val (name, bytes) = withContext(Dispatchers.IO) {
-                    val name = displayName(uri) ?: "file"
-                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                        ?: throw IllegalStateException("Could not open the file")
-                    name to bytes
-                }
-                if (bytes.size > MAX_UPLOAD_BYTES) {
-                    throw IllegalStateException("$name is too large (max ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB)")
-                }
-                client.upload(key, name, bytes)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                reportError(e)
-            } finally {
-                _state.update { it.copy(isSending = false) }
+        val id = UUID.randomUUID().toString()
+        perform("Uploading…") {
+            val (name, bytes) = withContext(Dispatchers.IO) {
+                val name = displayName(uri) ?: "file"
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: throw IllegalStateException("Could not open the file")
+                name to bytes
             }
-            refresh(startPolling = false)
+            if (bytes.size > MAX_UPLOAD_BYTES) {
+                throw IllegalStateException("$name is too large (max ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB)")
+            }
+            bridge.use { it.upload(key, id, name, bytes) }
+            refresh(key)
         }
     }
 
     fun deleteFile(name: String) {
         val key = _state.value.conversationKey ?: return
-        viewModelScope.launch {
-            runCatching { client.deleteFile(key, name) }.onFailure(::reportError)
-            refresh(startPolling = false)
+        perform("Deleting…") {
+            bridge.use { it.deleteFile(key, name) }
+            refresh(key)
         }
     }
 
@@ -235,51 +260,90 @@ class ClaudeViewModel @Inject constructor(
         }
     }
 
-    // ---- bridge ----
+    // ---- problems ----
 
-    fun startBridgeInTermux(): String? = TermuxLauncher.startBridge(context)
+    /** Repeats the step that failed (or just reconnects). */
+    fun retry() {
+        val step = retry ?: suspend {
+            _state.value.conversationKey?.let { refresh(it) }
+            startPolling()
+        }
+        perform("Trying again…", step)
+    }
 
-    fun retry() = refresh(startPolling = true)
-
-    fun dismissError() = _state.update { it.copy(error = null) }
+    // ---- internals ----
 
     /**
-     * Fetches the conversation; with [startPolling], keeps fetching every second or two until
-     * Claude is done answering.
+     * Runs [step] with [label] as the visible activity. On failure the problem or notice is shown
+     * and [step] is kept for [retry].
      */
-    private fun refresh(startPolling: Boolean) {
-        // Restart rather than join a running poll: its answer may predate what just changed
-        // (a message sent a moment ago would look finished and stop the polling).
-        pollJob?.cancel()
-        pollJob = viewModelScope.launch {
-            while (true) {
-                val key = _state.value.conversationKey ?: return@launch
-                try {
-                    val conversation = client.conversation(key)
-                    _state.update {
-                        if (it.conversationKey != key) it
-                        else it.copy(conversation = conversation, bridgeUnreachable = false)
-                    }
-                    if (_state.value.error?.startsWith(UNREACHABLE_PREFIX) == true) dismissError()
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    reportError(e)
-                    return@launch
-                }
-                if (!startPolling || !_state.value.isBusy) return@launch
-                delay(POLL_INTERVAL_MS)
+    private fun perform(label: String, step: suspend () -> Unit) {
+        viewModelScope.launch {
+            _state.update { it.copy(activity = label, problem = null, notice = null) }
+            try {
+                step()
+                retry = null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fail(e, step)
+            } finally {
+                _state.update { it.copy(activity = null) }
             }
         }
     }
 
-    private fun reportError(e: Throwable) {
-        val unreachable = (e as? ClaudeBridgeException)?.unreachable == true
-        _state.update {
-            it.copy(
-                error = e.message ?: e::class.simpleName,
-                bridgeUnreachable = unreachable,
-            )
+    private fun fail(e: Exception, step: suspend () -> Unit) {
+        log.w("Claude step failed: ${e.message}")
+        when (e) {
+            is ClaudeProblemException -> {
+                retry = step
+                _state.update { it.copy(problem = e.problem) }
+            }
+            is BridgeUnreachableException -> {
+                retry = step
+                _state.update {
+                    it.copy(problem = ClaudeProblem.BridgeFailed(
+                        "Claude's helper in Termux stopped answering. Android may have paused Termux " +
+                                "— exempt it from battery optimisation."
+                    ))
+                }
+            }
+            is BridgeHttpException -> _state.update { it.copy(notice = e.message) }
+            else -> {
+                retry = step
+                _state.update { it.copy(problem = ClaudeProblem.Unexpected(e.message ?: e.toString())) }
+            }
+        }
+    }
+
+    private suspend fun refresh(key: String) {
+        val conversation = bridge.use { it.conversation(key) }
+        if (_state.value.conversationKey != key) return
+        _state.update { it.copy(conversation = conversation) }
+        cache.save(key, conversation)
+    }
+
+    /** Fetches the conversation every 1.5 s until Claude is done. */
+    private fun startPolling() {
+        val key = _state.value.conversationKey ?: return
+        if (_state.value.conversation?.busy != true) return
+        pollJob?.cancel()
+        pollJob = viewModelScope.launch {
+            val poll: suspend () -> Unit = {
+                while (_state.value.conversationKey == key) {
+                    refresh(key)
+                    if (_state.value.conversation?.busy != true) break
+                    delay(POLL_INTERVAL_MS)
+                }
+            }
+            try {
+                poll()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fail(e) { poll() }
+            }
         }
     }
 
@@ -291,7 +355,6 @@ class ClaudeViewModel @Inject constructor(
     private companion object {
         const val POLL_INTERVAL_MS = 1500L
         const val MAX_UPLOAD_BYTES = 40 * 1024 * 1024
-        const val UNREACHABLE_PREFIX = "Can't reach"
 
         fun instructionsKey(conversationKey: String) = "claude_instructions:$conversationKey"
     }

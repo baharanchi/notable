@@ -1,11 +1,14 @@
 package com.ethran.notable.claude
 
-/** Defaults and ready-made instruction presets for the Claude feedback panel. */
+/** Defaults and ready-made instruction presets for Claude feedback. */
 object ClaudeDefaults {
-    const val BRIDGE_URL = "http://127.0.0.1:8765"
+    /** Where the bridge listens inside Termux (127.0.0.1 only). */
+    const val BRIDGE_PORT = 8765
 
-    /** Run by Termux through `bash -lc`, so `~` and the user's PATH work. */
-    const val TERMUX_COMMAND = "python ~/notable_claude_bridge.py"
+    /** The bridge exits after this long without requests or work; the next request restarts it. */
+    const val BRIDGE_IDLE_SECONDS = 15 * 60
+
+    const val CLAUDE_COMMAND = "claude"
 
     const val CHECK_PROMPT =
         "Here is my current page. Check my work so far, following your instructions."
@@ -38,4 +41,25 @@ object ClaudeDefaults {
         "Checker" to CHECKER,
         "Explainer" to EXPLAINER,
     )
+
+    /** Model choices offered in settings; the value is passed to `claude --model`. */
+    val MODELS: List<Pair<String, String>> = listOf(
+        "" to "Claude Code's default",
+        "opus" to "Opus",
+        "sonnet" to "Sonnet",
+        "haiku" to "Haiku",
+    )
+
+    /** Everything Termux needs, as one command to paste (ends by starting claude to log in). */
+    const val TERMUX_SETUP_COMMAND =
+        "pkg install -y python nodejs && npm install -g @anthropic-ai/claude-code && " +
+                "mkdir -p ~/.termux && (grep -q '^allow-external-apps *= *true' " +
+                "~/.termux/termux.properties 2>/dev/null || echo 'allow-external-apps = true' " +
+                ">> ~/.termux/termux.properties) && termux-reload-settings && claude"
+
+    const val ALLOW_EXTERNAL_APPS_COMMAND =
+        "mkdir -p ~/.termux && echo 'allow-external-apps = true' >> ~/.termux/termux.properties " +
+                "&& termux-reload-settings"
+
+    const val TERMUX_DOWNLOAD_URL = "https://f-droid.org/packages/com.termux/"
 }

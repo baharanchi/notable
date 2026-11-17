@@ -74,17 +74,17 @@ data class AppSettings(
     val blockSystemGestures: Boolean = false,
     val linkFormat: LinkFormat = LinkFormat.Markdown,
 
-    // Claude (via the Termux bridge, see tools/claude-bridge)
-    val claudeBridgeUrl: String = ClaudeDefaults.BRIDGE_URL,
-    val claudeBridgeToken: String = "",
+    // Claude feedback (Claude Code in Termux, see docs/claude-feedback.md)
     /** Feedback instructions for notebooks that have none of their own. */
     val claudeDefaultInstructions: String = ClaudeDefaults.INSTRUCTIONS,
     /** Message sent with the page snapshot when the Claude toolbar button is pressed. */
     val claudeCheckPrompt: String = ClaudeDefaults.CHECK_PROMPT,
     val claudeHintPrompt: String = ClaudeDefaults.HINT_PROMPT,
     val claudeCaptureMode: ClaudeCaptureMode = ClaudeCaptureMode.Visible,
-    /** Shell command Termux runs to start the bridge ("Start bridge in Termux"). */
-    val claudeTermuxCommand: String = ClaudeDefaults.TERMUX_COMMAND,
+    /** Passed to `claude --model`; empty uses Claude Code's default. */
+    val claudeModel: String = "",
+    /** How Termux finds Claude Code: a command name or a full path. */
+    val claudeCommand: String = ClaudeDefaults.CLAUDE_COMMAND,
 
     // Debug
     val showWelcome: Boolean = true,

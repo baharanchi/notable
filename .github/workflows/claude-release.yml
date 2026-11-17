@@ -1,5 +1,5 @@
 name: Release APK (Claude feedback build)
-# Builds an installable APK and publishes it, with the Termux bridge script, as a GitHub release.
+# Builds an installable APK and publishes it as a GitHub release.
 # Runs for a push to a claude/** branch whose last commit message contains [release]
 # (the release tag is then created here), or by hand from the Actions tab.
 on:
@@ -28,8 +28,8 @@ jobs:
       - name: Unit tests
         run: ./gradlew testDebugUnitTest
 
-      - name: Bridge tests
-        run: python3 -m unittest discover -s tools/claude-bridge/tests
+      - name: Claude helper tests
+        run: python3 -m unittest discover -s app/src/test/python
 
       # A debug build: installable as is, signed with the runner's debug key.
       - name: Build APK
@@ -43,14 +43,14 @@ jobs:
           apk=$(ls app/build/outputs/apk/debug/*.apk | head -n 1)
           cp "$apk" "notable-claude-$TAG.apk"
           cat > notes.md <<'EOF'
-          Notable with the Claude feedback panel (snapshot the page → feedback from Claude Code in Termux).
+          Notable with Claude feedback: snapshot the page, get feedback from Claude Code in Termux.
 
           **Install:** this APK is signed differently from the official Notable, so uninstall the official app first.
           Your notes are kept: they live in `Documents/notabledb`, outside the app (back that folder up anyway).
 
-          **Termux side:** download `notable_claude_bridge.py` below into Termux's home and run
-          `python ~/notable_claude_bridge.py`. Full setup: `tools/claude-bridge/README.md`.
+          **Setup:** Settings → Claude → copy the setup command into Termux, then tap Check setup.
+          Details: `docs/claude-feedback.md`.
           EOF
           gh release create "$TAG" --target "$GITHUB_SHA" --title "Notable + Claude ($TAG)" \
             --notes-file notes.md --latest \
-            "notable-claude-$TAG.apk" tools/claude-bridge/notable_claude_bridge.py
+            "notable-claude-$TAG.apk"
