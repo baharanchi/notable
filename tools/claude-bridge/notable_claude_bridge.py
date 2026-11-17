@@ -31,6 +31,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -153,6 +154,20 @@ def launch_command(path):
     if not os.path.exists(interpreter):
         interpreter = shutil.which(os.path.basename(interpreter)) or interpreter
     return [interpreter] + args + [path]
+
+
+def killed_by(returncode):
+    """The signal that ended a process, from its exit code (-N, or 128+N via a shell or a
+    handler that exits that way), or None for a normal exit."""
+    if returncode is None:
+        return None
+    number = -returncode if returncode < 0 else returncode - 128 if 128 < returncode < 160 else 0
+    if not number:
+        return None
+    try:
+        return signal.Signals(number).name
+    except ValueError:
+        return f"signal {number}"
 
 
 class Conversation:
@@ -354,6 +369,11 @@ class Bridge:
                 conv.meta["session_id"] = None
                 conv.add_entry("event", "Previous Claude session was not found; started a new one.")
                 result = self.invoke(conv, message, system, resume=False)
+            if result.get("killed_by_signal") and not conv.cancelled:
+                # Android or Termux sometimes stops background processes; one retry usually works.
+                log(conv.key, "claude was stopped by a signal, retrying once:", result["error"])
+                conv.add_entry("event", "Claude was interrupted; trying again.")
+                result = self.invoke(conv, message, system, resume=True)
 
             if conv.cancelled:
                 conv.add_entry("event", "Cancelled.")
@@ -378,8 +398,11 @@ class Bridge:
     def invoke(self, conv, message, system, resume):
         cmd = self.claude_command(conv, system, resume)
         log(conv.key, "running claude", "(resume)" if "--resume" in cmd else "(new session)")
+        # Own session: no controlling terminal, so a Termux terminal that hangs up or is paused
+        # in the background can't send claude SIGHUP or stop it.
         proc = subprocess.Popen(cmd, cwd=conv.dir, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, text=True, encoding="utf-8", bufsize=1)
+                                stderr=subprocess.PIPE, text=True, encoding="utf-8", bufsize=1,
+                                start_new_session=True)
         with conv.lock:
             conv.process = proc
             conv.status = "Claude is thinking…"
@@ -424,9 +447,14 @@ class Bridge:
             return result
         detail = result.get("text") or stderr or f"claude exited with code {proc.returncode}"
         if timed_out.is_set():
-            detail = f"Claude took longer than {self.args.timeout}s and was stopped."
+            return {"error": f"Claude took longer than {self.args.timeout}s and was stopped."}
         if resume and ("No conversation found" in detail or "No conversation found" in stderr):
             return {"resume_failed": True}
+        signal_name = killed_by(proc.returncode)
+        if signal_name and "text" not in result:
+            return {"error": f"Claude was stopped by {signal_name} before it finished "
+                             f"(exit code {proc.returncode}). {stderr[-500:]}".strip(),
+                    "killed_by_signal": True}
         return {"error": detail[-2000:]}
 
     def on_event(self, conv, event, texts, result):
@@ -623,6 +651,13 @@ def main(argv=None):
     p.add_argument("--verbose", action="store_true", help="log every request")
     args = p.parse_args(argv)
 
+    # Keep running when the Termux terminal hangs up (session closed, app paused).
+    if hasattr(signal, "SIGHUP"):
+        try:
+            signal.signal(signal.SIGHUP, signal.SIG_IGN)
+        except ValueError:  # not the main thread (tests)
+            pass
+
     bridge = Bridge(args)
     Handler.bridge = bridge
     server = ThreadingHTTPServer((args.host, args.port), Handler)
@@ -642,6 +677,10 @@ def main(argv=None):
         pass
     finally:
         server.server_close()
+        # claude runs in its own session, so Ctrl+C doesn't reach it: stop it here.
+        for conv in list(bridge.conversations.values()):
+            if conv.process and conv.process.poll() is None:
+                conv.process.kill()
 
 
 if __name__ == "__main__":

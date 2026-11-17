@@ -31,12 +31,19 @@ msg = json.loads(sys.stdin.readline())
 blocks = msg["message"]["content"]
 text = blocks[0]["text"]
 with open(os.path.join(os.getcwd(), "calls.jsonl"), "a") as f:
-    f.write(json.dumps({"args": args, "blocks": [b["type"] for b in blocks], "text": text}) + "\n")
+    f.write(json.dumps({"args": args, "blocks": [b["type"] for b in blocks], "text": text,
+                        "own_session": os.getsid(0) == os.getpid()}) + "\n")
 if "--resume" in args and args[args.index("--resume") + 1] == "gone":
     print("No conversation found with session ID: gone", file=sys.stderr)
     sys.exit(1)
 if "SLOW" in text:
     time.sleep(30)
+marker = os.path.join(os.getcwd(), "hup-once")
+if "HUP_ONCE" in text and not os.path.exists(marker):
+    open(marker, "w").close()
+    sys.exit(129)
+if "HUP_ALWAYS" in text:
+    sys.exit(129)
 if "CRASH" in text:
     print("boom", file=sys.stderr)
     sys.exit(3)
@@ -174,6 +181,27 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual(conv["history"][-1]["role"], "error")
         self.assertIn("boom", conv["history"][-1]["text"])
 
+    def test_hangup_is_retried_once(self):
+        self.req("POST", "/conversations/nb1/messages", {"text": "HUP_ONCE"})
+        conv = self.wait_idle()
+        self.assertEqual([e["role"] for e in conv["history"]], ["user", "event", "assistant"])
+        self.assertIn("interrupted", conv["history"][1]["text"])
+        self.assertEqual(len(self.calls()), 2)
+
+    def test_repeated_hangup_explains_the_signal(self):
+        self.req("POST", "/conversations/nb1/messages", {"text": "HUP_ALWAYS"})
+        conv = self.wait_idle()
+        self.assertEqual(conv["history"][-1]["role"], "error")
+        self.assertIn("SIGHUP", conv["history"][-1]["text"])
+        self.assertEqual(len(self.calls()), 2)
+
+    def test_claude_runs_without_a_controlling_terminal(self):
+        self.req("POST", "/conversations/nb1/messages", {"text": "hi"})
+        self.wait_idle()
+        conv_dir = os.path.join(self.tmp.name, "data", "conversations", "nb1")
+        with open(os.path.join(conv_dir, "calls.jsonl")) as f:
+            self.assertTrue(json.loads(f.readline())["own_session"])
+
     def test_lost_session_starts_a_new_one(self):
         conv_dir = os.path.join(self.tmp.name, "data", "conversations", "nb1")
         os.makedirs(conv_dir, exist_ok=True)
@@ -224,6 +252,16 @@ class BridgeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KilledByTest(unittest.TestCase):
+    def test_signal_exit_codes(self):
+        self.assertEqual(bridge_mod.killed_by(129), "SIGHUP")
+        self.assertEqual(bridge_mod.killed_by(-9), "SIGKILL")
+        self.assertEqual(bridge_mod.killed_by(137), "SIGKILL")
+        self.assertIsNone(bridge_mod.killed_by(0))
+        self.assertIsNone(bridge_mod.killed_by(1))
+        self.assertIsNone(bridge_mod.killed_by(None))
 
 
 class LaunchCommandTest(unittest.TestCase):
